@@ -11,10 +11,9 @@ import (
 	"strconv"
 )
 
-// Add your RPC definitions here.
 type WorkerArgs struct {
-	MapTaskID    int
-	ReduceTaskID int
+	MapTaskID    *int
+	ReduceTaskID *int
 }
 
 type WorkerReply struct {
@@ -22,7 +21,7 @@ type WorkerReply struct {
 	nMap     int
 	nReduce  int
 	fileName string
-	state    JobState
+	phase    JobPhase
 }
 
 // Cook up a unique-ish UNIX-domain socket name

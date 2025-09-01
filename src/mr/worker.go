@@ -39,18 +39,18 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string,
 ) {
 	for {
-		if response, ok := requestTask(); ok {
-			switch response.state {
-			case Mapping:
+		if response, ok := CallDispatch(WorkerArgs{nil, nil}); ok {
+			switch response.phase {
+			case MapPhase:
 				doMapTask(mapf, response)
-			case Reducing:
+			case ReducePhase:
 				doReduceTask(reducef, response)
-			case Waiting:
+			case WaitMap, WaitReduce:
 				time.Sleep(1 * time.Second)
 			case Done:
 				return
 			default:
-				panic(fmt.Sprintf("Unexpected JobState %v\n", response.state))
+				panic(fmt.Sprintf("Unexpected JobPhase %v\n", response.phase))
 			}
 		} else {
 			fmt.Printf("call failed!\n")
@@ -96,7 +96,9 @@ func doMapTask(mapf func(string, string) []KeyValue, reply *WorkerReply) {
 		}
 	}
 
-	reportDone(WorkerArgs{reply.ID, -1})
+	if _, ok := CallDispatch(WorkerArgs{&reply.ID, nil}); !ok {
+		panic("Unexpected error")
+	}
 }
 
 // A reduce worker unit
@@ -145,21 +147,13 @@ func doReduceTask(reducef func(string, []string) string, reply *WorkerReply) {
 		log.Fatalf("unable to rename tempfile %v", fileName)
 	}
 
-	reportDone(WorkerArgs{-1, reply.ID})
-}
-
-// RPC to request a task
-func requestTask() (reply *WorkerReply, ok bool) {
-	args := WorkerArgs{}
-	ok = call("Coordinator.FetchTask", &args, &reply)
-	return
-}
-
-// RPC to report a task done
-func reportDone(args WorkerArgs) (reply *WorkerReply, ok bool) {
-	if ok = call("Coordinator.ReduceDone", &args, &reply); !ok {
+	if _, ok := CallDispatch(WorkerArgs{nil, &reply.ID}); !ok {
 		panic("Unexpected error")
 	}
+}
+
+func CallDispatch(args WorkerArgs) (reply *WorkerReply, ok bool) {
+	ok = call("Coordinator.Dispatch", &args, &reply)
 	return
 }
 
