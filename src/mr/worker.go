@@ -49,8 +49,6 @@ func Worker(mapf func(string, string) []KeyValue,
 			default:
 				panic(fmt.Sprintf("Unexpected JobPhase %v\n", response.Phase))
 			}
-		} else {
-			fmt.Printf("call failed!\n")
 		}
 	}
 }
