@@ -11,7 +11,6 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
-	"time"
 )
 
 // KeyValue is the basic unit and core concept of data processing
@@ -39,18 +38,16 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string,
 ) {
 	for {
-		if response, ok := CallDispatch(WorkerArgs{nil, nil}); ok {
-			switch response.phase {
+		if response, ok := CallDispatch(); ok {
+			switch response.Phase {
 			case MapPhase:
 				doMapTask(mapf, response)
 			case ReducePhase:
 				doReduceTask(reducef, response)
-			case WaitMap, WaitReduce:
-				time.Sleep(1 * time.Second)
 			case Done:
 				return
 			default:
-				panic(fmt.Sprintf("Unexpected JobPhase %v\n", response.phase))
+				panic(fmt.Sprintf("Unexpected JobPhase %v\n", response.Phase))
 			}
 		} else {
 			fmt.Printf("call failed!\n")
@@ -60,20 +57,20 @@ func Worker(mapf func(string, string) []KeyValue,
 
 // A map worker unit
 func doMapTask(mapf func(string, string) []KeyValue, reply *WorkerReply) {
-	file, err := os.Open(reply.fileName)
+	file, err := os.Open(reply.FileName)
 	if err != nil {
-		log.Fatalf("cannot open %v", reply.fileName)
+		log.Fatalf("Map: cannot open %v", reply.FileName)
 	}
 	content, err := io.ReadAll(file)
 	if err != nil {
-		log.Fatalf("cannot read %v", reply.fileName)
+		log.Fatalf("cannot read %v", reply.FileName)
 	}
 	file.Close()
 
-	kva := mapf(reply.fileName, string(content))
-	buckets := make([][]KeyValue, reply.nReduce)
+	kva := mapf(reply.FileName, string(content))
+	buckets := make([][]KeyValue, reply.NReduce)
 	for _, kv := range kva {
-		i := ihash(kv.Key) % reply.nReduce
+		i := ihash(kv.Key) % reply.NReduce
 		buckets[i] = append(buckets[i], kv)
 	}
 
@@ -96,7 +93,7 @@ func doMapTask(mapf func(string, string) []KeyValue, reply *WorkerReply) {
 		}
 	}
 
-	if _, ok := CallDispatch(WorkerArgs{&reply.ID, nil}); !ok {
+	if _, ok := CallDone(DoneArgs{reply.ID, -1}); !ok {
 		panic("Unexpected error")
 	}
 }
@@ -104,11 +101,11 @@ func doMapTask(mapf func(string, string) []KeyValue, reply *WorkerReply) {
 // A reduce worker unit
 func doReduceTask(reducef func(string, []string) string, reply *WorkerReply) {
 	intermediate := []KeyValue{}
-	for i := 0; i < reply.nMap; i++ {
+	for i := 0; i < reply.NMap; i++ {
 		fileName := fmt.Sprintf("mr-%d-%d", i, reply.ID)
 		file, err := os.Open(fileName)
 		if err != nil {
-			log.Fatalf("cannot open %v", fileName)
+			log.Fatalf("Reduce: cannot open %v", fileName)
 		}
 		decoder := json.NewDecoder(file)
 		for {
@@ -140,6 +137,7 @@ func doReduceTask(reducef func(string, []string) string, reply *WorkerReply) {
 		output := reducef(intermediate[i].Key, values)
 
 		fmt.Fprintf(tmpfile, "%v %v\n", intermediate[i].Key, output)
+		i = j
 	}
 	tmpfile.Close()
 	fileName := fmt.Sprintf("mr-out-%d", reply.ID)
@@ -147,13 +145,19 @@ func doReduceTask(reducef func(string, []string) string, reply *WorkerReply) {
 		log.Fatalf("unable to rename tempfile %v", fileName)
 	}
 
-	if _, ok := CallDispatch(WorkerArgs{nil, &reply.ID}); !ok {
+	if _, ok := CallDone(DoneArgs{-1, reply.ID}); !ok {
 		panic("Unexpected error")
 	}
 }
 
-func CallDispatch(args WorkerArgs) (reply *WorkerReply, ok bool) {
+func CallDispatch() (reply *WorkerReply, ok bool) {
+	args := WorkerArgs{}
 	ok = call("Coordinator.Dispatch", &args, &reply)
+	return
+}
+
+func CallDone(args DoneArgs) (reply *DoneReply, ok bool) {
+	ok = call("Coordinator.HandleDone", &args, &reply)
 	return
 }
 

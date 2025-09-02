@@ -11,18 +11,22 @@ import (
 	"strconv"
 )
 
-type WorkerArgs struct {
-	MapTaskID    *int
-	ReduceTaskID *int
-}
+type WorkerArgs struct{}
 
 type WorkerReply struct {
 	ID       int
-	nMap     int
-	nReduce  int
-	fileName string
-	phase    JobPhase
+	NMap     int
+	NReduce  int
+	FileName string
+	Phase    JobPhase
 }
+
+type DoneArgs struct {
+	MapTaskID    int
+	ReduceTaskID int
+}
+
+type DoneReply struct{}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
