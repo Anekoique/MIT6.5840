@@ -38,7 +38,7 @@ func (lk *Lock) Acquire() {
 			continue
 		}
 
-		if ok := lk.ck.Put(lk.key, lk.clientID, version); ok != rpc.OK {
+		if ok := lk.ck.Put(lk.key, lk.clientID, version); ok != rpc.OK && ok != rpc.ErrMaybe {
 			continue
 		}
 
@@ -51,13 +51,19 @@ func (lk *Lock) Acquire() {
 
 func (lk *Lock) Release() {
 	for {
-		value, version, ok := lk.ck.Get(lk.key)
-		if ok != rpc.OK || value == UnLocked {
+		_, version, ok := lk.ck.Get(lk.key)
+		if ok != rpc.OK {
 			continue
 		}
 
-		if ok := lk.ck.Put(lk.key, UnLocked, version); ok == rpc.OK {
-			break
+		ok = lk.ck.Put(lk.key, UnLocked, version)
+		if ok == rpc.OK {
+			return
+		}
+		if ok == rpc.ErrMaybe {
+			if _, update, _ := lk.ck.Get(lk.key); update >= version+1 {
+				return
+			}
 		}
 	}
 }
