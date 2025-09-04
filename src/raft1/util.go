@@ -5,7 +5,7 @@ import "log"
 // Debugging
 const Debug = false
 
-func DPrintf(format string, a ...interface{}) {
+func DPrintf(format string, a ...any) {
 	if Debug {
 		log.Printf(format, a...)
 	}

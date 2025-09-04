@@ -31,6 +31,16 @@ type Raft struct {
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	currentTerm int
+	VotedFor    int
+	log         []LogEntry
+	commitIndex int
+	lastApplied int
+	nextIndex   []int
+	matchIndex  []int
+}
+
+type LogEntry struct {
 
 }
 
@@ -101,16 +111,22 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 }
 
 
-// example RequestVote RPC arguments structure.
+// RequestVoteArgs RequestVote RPC arguments structure.
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
+	Term		 int 
+	CandidateID  int
+	LastLogIndex int
+	LastLogTerm  int
 }
 
-// example RequestVote RPC reply structure.
+// RequestVoteReply RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
+	Term		int
+	VoteGranted bool
 }
 
 // example RequestVote RPC handler.
@@ -151,6 +167,26 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 
+type AppendEntriesArgs struct {
+	Term		 int
+	LeaderID	 int
+	PrevLogIndex int
+	PrevLogTerm  int
+	entries      []LogEntry
+	LeaderCommit int
+	
+}
+
+type AppendEntriesReply struct {
+	Term	int
+	Success bool
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
+}
+
+
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -163,7 +199,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // if it's ever committed. the second return value is the current
 // term. the third return value is true if this server believes it is
 // the leader.
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
+func (rf *Raft) Start(command any) (int, int, bool) {
 	index := -1
 	term := -1
 	isLeader := true
