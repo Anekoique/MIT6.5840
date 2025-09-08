@@ -68,13 +68,6 @@ type LogEntry struct {
 	Index   int
 }
 
-func (rf *Raft) safeGet(index int) int {
-	if index >= 0 && index < len(rf.log) {
-		return rf.log[index].Term
-	}
-	return 0
-}
-
 // GetState return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -99,6 +92,18 @@ func (rf *Raft) downgrade(level RaftState) {
 	}
 }
 
+func (rf *Raft) atomicAdd(server int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.nextIndex[server]++
+}
+
+func (rf *Raft) atomicSub(server int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.nextIndex[server]--
+}
+
 func (rf *Raft) toLeader() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -109,6 +114,7 @@ func (rf *Raft) toLeader() {
 		rf.nextIndex[i] = index
 		rf.matchIndex[i] = 0
 	}
+	rf.appendBraodcast(false)
 }
 
 func (rf *Raft) checkTerm(term int) bool {
@@ -124,6 +130,7 @@ func (rf *Raft) updateTerm(newTerm int) bool {
 		rf.currentTerm = newTerm
 		rf.VotedFor = -1
 		rf.state = Follower
+		DPrintf("%v Term update %v", rf.me, newTerm)
 		return true
 	}
 	return false
@@ -315,6 +322,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
 		reply.Term, reply.Success = rf.currentTerm, false
+		DPrintf("args.Term %v < rf.currentTerm %v", args.Term, rf.currentTerm)
 		return
 	}
 	if args.PrevLogIndex >= len(rf.log) {
@@ -323,6 +331,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	} else if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Term, reply.Success = rf.currentTerm, false
+		DPrintf("rf.log[args.PrevLogIndex].Term %v != args.PrevLogTerm %v", rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		return
 	}
 	if len(args.Entries) != 0 {
@@ -359,17 +368,15 @@ func (rf *Raft) appendOnce(server int, isReplicate bool) bool {
 	rf.mu.Unlock()
 
 	reply := AppendEntriesReply{}
-	DPrintf("args %v", args)
 	if !rf.peers[server].Call("Raft.AppendEntries", &args, &reply) {
 		return false
 	}
 	if !reply.Success {
 		if !rf.updateTerm(reply.Term) && rf.checkTerm(args.Term) {
 			DPrintf("retry")
-			rf.mu.Lock()
-			rf.nextIndex[server] -= 1
-			rf.mu.Unlock()
+			rf.atomicSub(server)
 			rf.appendOnce(server, true)
+			rf.atomicAdd(server)
 		}
 	}
 	return true
@@ -387,11 +394,6 @@ func (rf *Raft) appendBraodcast(isReplicate bool) {
 			success := rf.appendOnce(server, isReplicate)
 			if success {
 				atomic.AddInt32(&counter, 1)
-				rf.mu.Lock()
-				DPrintf("%v replicate log", server)
-				rf.nextIndex[server] = len(rf.log)
-				rf.matchIndex[server] = len(rf.log) - 1
-				rf.mu.Unlock()
 			}
 			done <- success
 		}(i)
@@ -501,22 +503,20 @@ func (rf *Raft) startElection() {
 				if votes > len(rf.peers)/2 {
 					DPrintf("%v Become Leader!", rf.me)
 					rf.toLeader()
-					rf.appendBraodcast(false)
 					return
 				}
 			}
 		case <-timer:
 			DPrintf("Election failed: TimeOut! %v", rf.me)
 			rf.downgrade(1)
-			rf.startElection()
+			return
 		}
 	}
 	rf.downgrade(1)
-	rf.startElection()
 }
 
 func (rf *Raft) getTimeout() time.Duration {
-	ms := 600 + (rand.Int63() % 300)
+	ms := 600 + (rand.Int63() % 600)
 	return time.Duration(ms) * time.Millisecond
 }
 
