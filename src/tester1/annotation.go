@@ -395,7 +395,10 @@ func (an *Annotation) finalize() []porcupine.Annotation {
 	}
 
 	an.finalized = true
-	return x
+
+	out := make([]porcupine.Annotation, len(x))
+	copy(out, x)
+	return out
 }
 
 func (an *Annotation) clear() {
@@ -410,6 +413,10 @@ func (an *Annotation) annotatePointColor(
 	tag, desp, details, bgcolor string,
 ) {
 	an.mu.Lock()
+	if an.finalized {
+		an.mu.Unlock()
+		return
+	}
 	t := timestamp()
 	a := porcupine.Annotation{
 		Tag: tag,
@@ -426,6 +433,10 @@ func (an *Annotation) annotateIntervalColor(
 	tag string, start int64, desp, details, bgcolor string,
 ) {
 	an.mu.Lock()
+	if an.finalized {
+		an.mu.Unlock()
+		return
+	}
 	a := porcupine.Annotation{
 		Tag: tag,
 		Start: start,
@@ -442,6 +453,10 @@ func (an *Annotation) annotateContinuousColor(
 	tag, desp, details, bgcolor string,
 ) {
 	an.mu.Lock()
+	if an.finalized {
+		an.mu.Unlock()
+		return
+	}
 	defer an.mu.Unlock()
 
 	cont, ok := an.continuous[tag]
@@ -483,6 +498,10 @@ func (an *Annotation) annotateContinuousColor(
 
 func (an *Annotation) annotateContinuousEnd(tag string) {
 	an.mu.Lock()
+	if an.finalized {
+		an.mu.Unlock()
+		return
+	}
 	defer an.mu.Unlock()
 
 	cont, ok := an.continuous[tag]

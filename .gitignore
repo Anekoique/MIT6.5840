@@ -2,3 +2,4 @@ pkg/
 *-handin.tar.gz
 src/main/mr-*
 log*
+debug*
