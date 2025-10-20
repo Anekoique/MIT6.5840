@@ -6,7 +6,7 @@ import (
 )
 
 // Debugging
-const Debug = false
+const Debug = true
 
 func init() {
 	// Disable the default date/time prefix added by the standard logger.
