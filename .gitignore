@@ -1,5 +1,5 @@
 pkg/
 *-handin.tar.gz
 src/main/mr-*
-log*
+*.log
 debug*
