@@ -147,8 +147,12 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 func (rf *Raft) applier() {
 	for !rf.killed() {
 		rf.mu.Lock()
-		for rf.lastApplied >= rf.commitIndex {
+		for rf.lastApplied >= rf.commitIndex && !rf.killed() {
 			rf.applyCond.Wait()
+		}
+		if rf.killed() {
+			rf.mu.Unlock()
+			break
 		}
 
 		commitIndex := rf.commitIndex
@@ -200,6 +204,7 @@ func (rf *Raft) resetTimer(t *time.Timer) {
 	}
 }
 
+// appendBroadcast dispatches sendInstallSnapshot or appendOnce to all peers.
 func (rf *Raft) appendBroadcast() {
 	for peer := range rf.peers {
 		if peer == rf.me {
@@ -242,10 +247,9 @@ func (rf *Raft) ticker() {
 // Kill stops this Raft peer.
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
-	rf.resetTimer(rf.electionTimer)
-	rf.resetTimer(rf.heartbeatTimer)
 	rf.mu.Lock()
 	rf.applyCond.Broadcast()
+	close(rf.applyCh)
 	rf.mu.Unlock()
 }
 

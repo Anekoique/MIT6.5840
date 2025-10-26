@@ -42,7 +42,7 @@ func (rf *Raft) startElection() {
 	}
 }
 
-// example RequestVote RPC handler.
+// RequestVote handles incoming RequestVote RPCs.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
