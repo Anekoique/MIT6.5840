@@ -66,8 +66,12 @@ func MakeRSM(servers []*labrpc.ClientEnd, me int, persister *tester.Persister, m
 		pendings:     make(map[int]*Waiter),
 		shutdownCh:   make(chan struct{}),
 	}
+	snapshot := persister.ReadSnapshot()
 	if !useRaftStateMachine {
 		rsm.rf = raft.Make(servers, me, persister, rsm.applyCh)
+	}
+	if maxraftstate >= 0 && len(snapshot) > 0 {
+		rsm.sm.Restore(snapshot)
 	}
 	go rsm.reader()
 	return rsm
@@ -79,13 +83,18 @@ func (rsm *RSM) Raft() raftapi.Raft {
 
 func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 	op := Op{Me: rsm.me, Id: rand.Int63(), Req: req}
+	// Must hold lock before Start to ensure atomic registration of waiter,
+	// preventing race where applier processes the entry before waiter is registered
+	rsm.mu.Lock()
 	index, term, isLeader := rsm.rf.Start(op)
 	if !isLeader {
+		rsm.mu.Unlock()
 		return rpc.ErrWrongLeader, nil
 	}
 
-	waiter := &Waiter{id: op.Id, term: term, ch: make(chan any)}
+	waiter := &Waiter{id: op.Id, term: term, ch: make(chan any, 1)}
 	rsm.registerWaiter(index, waiter)
+	rsm.mu.Unlock()
 	return rsm.waitForOp(index, waiter)
 }
 
@@ -97,7 +106,7 @@ func (rsm *RSM) waitForOp(index int, waiter *Waiter) (rpc.Err, any) {
 	for {
 		select {
 		case res := <-waiter.ch:
-			if res == Unregister || rsm.isTermStale(waiter.term) {
+			if res == Unregister {
 				return rpc.ErrWrongLeader, nil
 			}
 			return rpc.OK, res
@@ -112,8 +121,6 @@ func (rsm *RSM) waitForOp(index int, waiter *Waiter) (rpc.Err, any) {
 }
 
 func (rsm *RSM) registerWaiter(index int, waiter *Waiter) {
-	rsm.mu.Lock()
-	defer rsm.mu.Unlock()
 	if old := rsm.pendings[index]; old != nil {
 		old.notify(Unregister)
 	}
@@ -135,15 +142,16 @@ func (rsm *RSM) isTermStale(oldTerm int) bool {
 
 func (rsm *RSM) reader() {
 	for msg := range rsm.applyCh {
-		if !msg.CommandValid {
-			continue
+		if msg.CommandValid {
+			rsm.handleCommand(msg)
+		} else if msg.SnapshotValid {
+			rsm.handleSnapshot(msg)
 		}
-		rsm.handleApply(msg)
 	}
 	rsm.failPending()
 }
 
-func (rsm *RSM) handleApply(msg raftapi.ApplyMsg) {
+func (rsm *RSM) handleCommand(msg raftapi.ApplyMsg) {
 	op, ok := msg.Command.(Op)
 	if !ok {
 		return
@@ -159,6 +167,9 @@ func (rsm *RSM) handleApply(msg raftapi.ApplyMsg) {
 		} else {
 			waiter.notify(Unregister)
 		}
+	}
+	if rsm.maxraftstate >= 0 && rsm.rf.PersistBytes() > int(float64(rsm.maxraftstate)*0.9) {
+		go rsm.installSnapshot(msg.CommandIndex)
 	}
 }
 
@@ -176,4 +187,20 @@ func (rsm *RSM) signalShutdown() {
 	rsm.shutdownOnce.Do(func() {
 		close(rsm.shutdownCh)
 	})
+}
+
+func (rsm *RSM) installSnapshot(index int) {
+	data := rsm.sm.Snapshot()
+	rsm.rf.Snapshot(index, data)
+}
+
+func (rsm *RSM) handleSnapshot(msg raftapi.ApplyMsg) {
+	rsm.sm.Restore(msg.Snapshot)
+	rsm.mu.Lock()
+	defer rsm.mu.Unlock()
+	for index, waiter := range rsm.pendings {
+		if index <= msg.SnapshotIndex {
+			waiter.notify(Unregister)
+		}
+	}
 }
