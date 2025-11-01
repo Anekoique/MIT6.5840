@@ -75,13 +75,10 @@ const (
 func FinalizeAnnotations(end string) []porcupine.Annotation {
 	annotations := annotation.finalize()
 
-	// XXX: Make the last annotation an interval one to work around Porcupine's
-	// issue. Consider removing this once the issue is fixed.
 	t := timestamp()
 	aend := porcupine.Annotation{
 		Tag:             TAG_INFO,
 		Start:           t,
-		End:             t + 1000,
 		Description:     end,
 		Details:         end,
 		BackgroundColor: COLOR_INFO,
@@ -471,11 +468,7 @@ func (an *Annotation) annotateContinuousColor(
 	}
 	an.annotations = append(an.annotations, aprev)
 	an.continuous[tag] = Continuous{
-		// XXX: If the start timestamp of an event is too closer to the end
-		// timestamp of another event, Porcupine seems to overlap the two
-		// events. We add a delta (1000) as a workaround, but remove this once
-		// this issue is resolved.
-		start:   t + 1000,
+		start:   t,
 		desp:    desp,
 		details: details,
 		bgcolor: bgcolor,
@@ -523,13 +516,10 @@ func (an *Annotation) cleanup(failed bool, end string) {
 		return
 	}
 
-	// XXX: Make the last annotation an interval one to work around Porcupine's
-	// issue. Consider removing this once the issue is fixed.
 	t := timestamp()
 	aend := porcupine.Annotation{
 		Tag:             TAG_INFO,
 		Start:           t,
-		End:             t + 1000,
 		Description:     end,
 		Details:         end,
 		BackgroundColor: COLOR_INFO,

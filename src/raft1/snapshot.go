@@ -4,8 +4,6 @@ package raft
 
 import (
 	"slices"
-
-	"6.5840/raftapi"
 )
 
 // Snapshot tells Raft that it has created a snapshot up to and including index.
@@ -21,6 +19,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		return
 	}
 	rf.log = slices.Clone(rf.log[rebased:])
+	rf.log[0].Command = nil
 	rf.persist(snapshot)
 	rf.logf("Created snapshot up to index %d.", index)
 }
@@ -78,17 +77,14 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		idx, _ := rf.rebase(args.LastIncludedIndex)
 		rf.log = rf.log[idx:]
 	}
-	rf.log[0].Index, rf.log[0].Term = args.LastIncludedIndex, args.LastIncludedTerm
+	rf.log[0].Index, rf.log[0].Term, rf.log[0].Command = args.LastIncludedIndex, args.LastIncludedTerm, nil
 	rf.lastApplied = args.LastIncludedIndex
 	rf.commitIndex = args.LastIncludedIndex
 	rf.persist(args.Data)
 
-	go func() {
-		rf.applyCh <- raftapi.ApplyMsg{
-			SnapshotValid: true,
-			Snapshot:      args.Data,
-			SnapshotTerm:  args.LastIncludedTerm,
-			SnapshotIndex: args.LastIncludedIndex,
-		}
-	}()
+	// Delay the snapshot sending to avoid msg disorder
+	rf.pendingSnapshot = args.Data
+	rf.pendingSnapshotIndex = args.LastIncludedIndex
+	rf.pendingSnapshotTerm = args.LastIncludedTerm
+	rf.applyCond.Broadcast()
 }

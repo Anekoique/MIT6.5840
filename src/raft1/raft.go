@@ -31,18 +31,19 @@ const (
 const (
 	HeartbeatInterval = 100 * time.Millisecond
 	ElectionTimeout   = 300 * time.Millisecond
-	ElectionJitter    = 600 * time.Millisecond
+	ElectionJitter    = 300 * time.Millisecond
 )
 
 // Raft is A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.Mutex            // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd   // RPC end points of all peers
-	persister *tester.Persister     // Object to hold this peer's persisted state
-	me        int                   // this peer's index into peers[]
-	dead      int32                 // set by Kill()
-	applyCh   chan raftapi.ApplyMsg // channel to send ApplyMsg messages to the service
-	applyCond *sync.Cond            // Condition variable to signal the applier goroutine
+	mu         sync.Mutex            // Lock to protect shared access to this peer's state
+	peers      []*labrpc.ClientEnd   // RPC end points of all peers
+	persister  *tester.Persister     // Object to hold this peer's persisted state
+	me         int                   // this peer's index into peers[]
+	dead       int32                 // set by Kill()
+	applyCh    chan raftapi.ApplyMsg // channel to send ApplyMsg messages to the service
+	applyCond  *sync.Cond            // Condition variable to signal the applier goroutine
+	shutdownCh chan struct{}         // Channel to signal shutdown
 
 	// Persistent state
 	state       RaftState
@@ -61,6 +62,11 @@ type Raft struct {
 	// Timers
 	electionTimer  *time.Timer
 	heartbeatTimer *time.Timer
+
+	// Snapshot state
+	pendingSnapshot      []byte
+	pendingSnapshotIndex int
+	pendingSnapshotTerm  int
 }
 
 // GetState return currentTerm and whether this server
@@ -104,7 +110,7 @@ func (rf *Raft) toFollower() {
 	rf.resetTimer(rf.electionTimer)
 }
 
-// updateTerm updates the current term if newTerm is greater than the current term.
+// updateTerm is a helper function used to both check if `Term` has been updated and to implement the update logic.
 func (rf *Raft) updateTerm(newTerm int) bool {
 	if newTerm > rf.currentTerm {
 		rf.logf("Discovered a newer term %d (our term is %d).", newTerm, rf.currentTerm)
@@ -145,14 +151,29 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 
 // applier is a long-running goroutine that applies committed log entries to the state machine.
 func (rf *Raft) applier() {
+	defer close(rf.applyCh)
 	for !rf.killed() {
 		rf.mu.Lock()
-		for rf.lastApplied >= rf.commitIndex && !rf.killed() {
+		for rf.lastApplied >= rf.commitIndex && rf.pendingSnapshot == nil && !rf.killed() {
 			rf.applyCond.Wait()
 		}
 		if rf.killed() {
 			rf.mu.Unlock()
-			break
+			return
+		}
+
+		if rf.pendingSnapshot != nil {
+			snapshot := rf.pendingSnapshot
+			rf.pendingSnapshot = nil
+			rf.mu.Unlock()
+
+			rf.applyCh <- raftapi.ApplyMsg{
+				SnapshotValid: true,
+				Snapshot:      snapshot,
+				SnapshotTerm:  rf.pendingSnapshotTerm,
+				SnapshotIndex: rf.pendingSnapshotIndex,
+			}
+			continue
 		}
 
 		commitIndex := rf.commitIndex
@@ -212,10 +233,10 @@ func (rf *Raft) appendBroadcast() {
 		}
 
 		if rf.nextIndex[peer] <= rf.firstLog().Index {
-			rf.logf("Heartbeat timer expired, sending installsnapshot to peer %d.", peer)
+			// rf.logf("Heartbeat timer expired, sending installsnapshot to peer %d.", peer)
 			go rf.sendInstallSnapshot(peer)
 		} else {
-			rf.logf("Heartbeat timer expired, sending heartbeats to peer %d.", peer)
+			// rf.logf("Heartbeat timer expired, sending heartbeats to peer %d.", peer)
 			go rf.appendOnce(peer)
 		}
 	}
@@ -240,17 +261,20 @@ func (rf *Raft) ticker() {
 				rf.resetTimer(rf.heartbeatTimer)
 			}
 			rf.mu.Unlock()
+		case <-rf.shutdownCh:
+			return
 		}
 	}
 }
 
 // Kill stops this Raft peer.
 func (rf *Raft) Kill() {
+	// Indicate that the peer is dead
 	atomic.StoreInt32(&rf.dead, 1)
-	rf.mu.Lock()
+	// kill ticker
+	close(rf.shutdownCh)
+	// kill applier
 	rf.applyCond.Broadcast()
-	close(rf.applyCh)
-	rf.mu.Unlock()
 }
 
 // killed checks if this Raft peer has been killed.
@@ -275,6 +299,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		nextIndex:   make([]int, len(peers)),
 		matchIndex:  make([]int, len(peers)),
 		applyCh:     applyCh,
+		shutdownCh:  make(chan struct{}),
 	}
 	rf.applyCond = sync.NewCond(&rf.mu)
 	// dummy log entry at index 0
