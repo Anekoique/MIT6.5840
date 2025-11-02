@@ -14,6 +14,10 @@ const (
 	// For future kvraft lab
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrWrongGroup  = "ErrWrongGroup"
+
+	// For shardkv lab
+	ErrShardFrozen = "ErrShardFrozen"
+	ErrStaleNum    = "ErrStaleNum"
 )
 
 type Tversion uint64

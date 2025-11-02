@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"6.5840/tester1"
+	tester "6.5840/tester1"
 )
 
 type Tshid int
@@ -281,4 +281,21 @@ func (cfg *ShardConfig) CheckConfig(t *testing.T, groups []tester.Tgid) {
 func fatalf(t *testing.T, format string, args ...any) {
 	debug.PrintStack()
 	t.Fatalf(format, args...)
+}
+
+type Move struct {
+	Shard Tshid
+	Src   tester.Tgid
+	Dst   tester.Tgid
+}
+
+func (cfg *ShardConfig) Diff(new *ShardConfig) []Move {
+	moves := make([]Move, 0, NShards)
+	for s := 0; s < NShards; s++ {
+		src, dst := cfg.Shards[s], new.Shards[s]
+		if src != dst {
+			moves = append(moves, Move{Shard: Tshid(s), Src: src, Dst: dst})
+		}
+	}
+	return moves
 }

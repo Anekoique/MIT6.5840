@@ -9,7 +9,7 @@ import (
 )
 
 // Debugging flag.
-const Debug = false
+const Debug = true
 
 // DPrintf is a conditional debug print function.
 func DPrintf(format string, a ...any) {

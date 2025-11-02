@@ -148,12 +148,12 @@ func (rsm *RSM) reader() {
 			rsm.handleSnapshot(msg)
 		}
 	}
-	rsm.failPending()
+	rsm.abortPending()
 }
 
 func (rsm *RSM) handleCommand(msg raftapi.ApplyMsg) {
 	op, ok := msg.Command.(Op)
-	if !ok {
+	if !ok || op.Req == nil {
 		return
 	}
 
@@ -173,7 +173,7 @@ func (rsm *RSM) handleCommand(msg raftapi.ApplyMsg) {
 	}
 }
 
-func (rsm *RSM) failPending() {
+func (rsm *RSM) abortPending() {
 	rsm.mu.Lock()
 	defer rsm.mu.Unlock()
 	for _, waiter := range rsm.pendings {
