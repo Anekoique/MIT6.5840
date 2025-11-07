@@ -25,6 +25,10 @@ type ShardCtrler struct {
 	version int64
 }
 
+func (sck *ShardCtrler) bumpVersion() int64 {
+	return atomic.AddInt64(&sck.version, 1)
+}
+
 // Make a ShardCltler, which stores its state in a kvsrv.
 func MakeShardCtrler(clnt *tester.Clnt) *ShardCtrler {
 	sck := &ShardCtrler{clnt: clnt}
@@ -47,8 +51,18 @@ func (sck *ShardCtrler) InitController() {
 func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
 	v := cfg.String()
 	sck.IKVClerk.Put("Config", v, rpc.Tversion(sck.version))
-	atomic.AddInt64(&sck.version, 1)
+	sck.bumpVersion()
 	raft.DPrintf("[SHARDCTRLR] Update Config: %s\n", v)
+}
+
+func (sck *ShardCtrler) handleRpcErr(err rpc.Err) bool {
+	if err == rpc.OK {
+		return true
+	}
+	if err == rpc.ErrStaleNum {
+		panic("Unexpected RPC ERROR: ErrStaleNum")
+	}
+	return false
 }
 
 // Called by the tester to ask the controller to change the
@@ -57,6 +71,9 @@ func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
 // controller.
 func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 	old := sck.Query()
+	if new.Num != old.Num+1 {
+		panic("ChangeConfigTo: new.Num != old.Num + 1")
+	}
 	moves := old.Diff(new)
 	raft.DPrintf("[SHARDCTRLR] Moves: %v\n", moves)
 	for _, move := range moves {
@@ -69,17 +86,25 @@ func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 		srcClerk := shardgrp.MakeClerk(sck.clnt, srcServer)
 		dstClerk := shardgrp.MakeClerk(sck.clnt, dstServer)
 
-		state, err := srcClerk.FreezeShard(move.Shard, new.Num)
-		if err != rpc.OK {
-			continue
+		var state []byte
+		var err rpc.Err
+		for {
+			state, err = srcClerk.FreezeShard(move.Shard, new.Num)
+			if sck.handleRpcErr(err) {
+				break
+			}
 		}
-		err = dstClerk.InstallShard(move.Shard, state, new.Num)
-		if err != rpc.OK {
-			continue
+		for {
+			err = dstClerk.InstallShard(move.Shard, state, new.Num)
+			if sck.handleRpcErr(err) {
+				break
+			}
 		}
-		err = dstClerk.DeleteShard(move.Shard, new.Num)
-		if err != rpc.OK {
-			continue
+		for {
+			err = srcClerk.DeleteShard(move.Shard, new.Num)
+			if sck.handleRpcErr(err) {
+				break
+			}
 		}
 	}
 	sck.InitConfig(new)

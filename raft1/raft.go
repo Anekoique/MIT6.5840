@@ -30,8 +30,8 @@ const (
 // Timing constants.
 const (
 	HeartbeatInterval = 100 * time.Millisecond
-	ElectionTimeout   = 300 * time.Millisecond
-	ElectionJitter    = 300 * time.Millisecond
+	ElectionTimeout   = 450 * time.Millisecond
+	ElectionJitter    = 450 * time.Millisecond
 )
 
 // Raft is A Go object implementing a single Raft peer.

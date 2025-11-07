@@ -9,8 +9,15 @@ package shardkv
 //
 
 import (
+	"math/rand"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"6.5840/kvsrv1/rpc"
 	kvtest "6.5840/kvtest1"
+	raft "6.5840/raft1"
 	"6.5840/shardkv1/shardcfg"
 	"6.5840/shardkv1/shardctrler"
 	"6.5840/shardkv1/shardgrp"
@@ -18,46 +25,104 @@ import (
 )
 
 type Clerk struct {
-	clnt *tester.Clnt
-	sck  *shardctrler.ShardCtrler
-	// You will have to modify this struct.
+	mu       sync.Mutex
+	clnt     *tester.Clnt
+	sck      *shardctrler.ShardCtrler
+	clientID int64
+	seq      int64
+
+	config    shardcfg.ShardConfig
+	grpClerks map[tester.Tgid]*grpClerk
 }
 
-// The tester calls MakeClerk and passes in a shardctrler so that
-// client can call it's Query method
+type grpClerk struct {
+	servers []string
+	clerk   *shardgrp.Clerk
+}
+
+func (ck *Clerk) updateConfig() {
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	newConfig := ck.sck.Query()
+	if newConfig == nil {
+		return
+	}
+	if newConfig.Num > ck.config.Num {
+		ck.config = *newConfig
+		ck.pruneCache()
+	}
+}
+
+func (ck *Clerk) pruneCache() {
+	if len(ck.grpClerks) == 0 {
+		return
+	}
+	for gid := range ck.grpClerks {
+		if _, ok := ck.config.Groups[gid]; !ok {
+			delete(ck.grpClerks, gid)
+		}
+	}
+}
+
 func MakeClerk(clnt *tester.Clnt, sck *shardctrler.ShardCtrler) kvtest.IKVClerk {
 	ck := &Clerk{
-		clnt: clnt,
-		sck:  sck,
+		clnt:      clnt,
+		sck:       sck,
+		clientID:  rand.Int63(),
+		seq:       0,
+		grpClerks: make(map[tester.Tgid]*grpClerk),
 	}
-	// You'll have to add code here.
+	ck.config = *ck.sck.Query()
 	return ck
 }
 
-// Get a key from a shardgrp.  You can use shardcfg.Key2Shard(key) to
-// find the shard responsible for the key and ck.sck.Query() to read
-// the current configuration and lookup the servers in the group
-// responsible for key.  You can make a clerk for that group by
-// calling shardgrp.MakeClerk(ck.clnt, servers).
 func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
-	cfg := ck.sck.Query()
-	shard := shardcfg.Key2Shard(key)
-	_, srvs, ok := cfg.GidServers(shard)
-	if !ok {
-		return "", 0, rpc.ErrNoKey
+	for {
+		grpCk := ck.genGrpClerk(key)
+		value, version, err := grpCk.Get(key)
+		if err == rpc.ErrWrongGroup || err == rpc.ErrShardFrozen {
+			if err == rpc.ErrShardFrozen {
+				time.Sleep(50 * time.Millisecond)
+			}
+			ck.updateConfig()
+			continue
+		}
+		return value, version, err
 	}
-	grpCk := shardgrp.MakeClerk(ck.clnt, srvs)
-	return grpCk.Get(key)
 }
 
-// Put a key to a shard group.
 func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
-	cfg := ck.sck.Query()
-	shard := shardcfg.Key2Shard(key)
-	_, srvs, ok := cfg.GidServers(shard)
-	if !ok {
-		return rpc.ErrNoKey
+	seq := atomic.AddInt64(&ck.seq, 1)
+	for {
+		grpCk := ck.genGrpClerk(key)
+		err := grpCk.Put(key, value, version, ck.clientID, seq)
+		if err == rpc.ErrWrongGroup || err == rpc.ErrShardFrozen {
+			if err == rpc.ErrShardFrozen {
+				time.Sleep(50 * time.Millisecond)
+			}
+			ck.updateConfig()
+			continue
+		}
+		return err
 	}
-	grpCk := shardgrp.MakeClerk(ck.clnt, srvs)
-	return grpCk.Put(key, value, version)
+}
+
+func (ck *Clerk) genGrpClerk(key string) *shardgrp.Clerk {
+	shard := shardcfg.Key2Shard(key)
+
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+
+	gid, srv, _ := ck.config.GidServers(shard)
+	entry, ok := ck.grpClerks[gid]
+	if !ok || !slices.Equal(entry.servers, srv) {
+		srvCopy := append([]string(nil), srv...)
+		entry = &grpClerk{
+			servers: srvCopy,
+			clerk:   shardgrp.MakeClerk(ck.clnt, srvCopy),
+		}
+		ck.grpClerks[gid] = entry
+	}
+	raft.DPrintf("[Client] route key=%s shard=%d gid=%d servers=%v", key, shard, gid, entry.servers)
+	return entry.clerk
 }
