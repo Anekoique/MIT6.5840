@@ -9,7 +9,8 @@ const (
 	ErrVersion = "ErrVersion"
 
 	// Err returned by Clerk only
-	ErrMaybe = "ErrMaybe"
+	ErrMaybe       = "ErrMaybe"
+	ErrUnreachable = "ErrUnreachable"
 
 	// For future kvraft lab
 	ErrWrongLeader = "ErrWrongLeader"

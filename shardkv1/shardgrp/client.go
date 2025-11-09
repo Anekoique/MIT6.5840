@@ -32,9 +32,11 @@ func (ck *Clerk) bumpLeader() {
 	ck.leader = (ck.leader + 1) % len(ck.servers)
 }
 
-func sendRPC[A any, R any](ck *Clerk, method string, args *A, reply *R) rpc.Err {
+func sendRPC[A any, R any](ck *Clerk, method string, args *A, reply *R) (err rpc.Err) {
 	raft.DPrintf("[Client][%s ENTRY] Clerk %s with args=%v", method, method, args)
-	defer raft.DPrintf("[Client][%s RETURN] Clerk %s return with reply=%v", method, method, reply)
+	defer func() {
+		raft.DPrintf("[Client][%s RETURN] Clerk %s return with err=%v reply=%v", method, method, err, reply)
+	}()
 
 	timeout := time.NewTimer(requestTimeout)
 	retried := false
@@ -42,7 +44,7 @@ func sendRPC[A any, R any](ck *Clerk, method string, args *A, reply *R) rpc.Err 
 	for {
 		select {
 		case <-timeout.C:
-			return rpc.ErrWrongGroup
+			return rpc.ErrUnreachable
 		default:
 			*reply = zero
 			ok := ck.clnt.Call(ck.servers[ck.leader], method, args, reply)
