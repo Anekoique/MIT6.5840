@@ -24,6 +24,7 @@ import (
 	tester "6.5840/tester1"
 )
 
+// Clerk is a client for a sharded key/value service.
 type Clerk struct {
 	mu       sync.Mutex
 	clnt     *tester.Clnt
@@ -35,11 +36,13 @@ type Clerk struct {
 	grpClerks map[tester.Tgid]*grpClerk
 }
 
+// grpClerk wraps a shard group clerk with its server list.
 type grpClerk struct {
 	servers []string
 	clerk   *shardgrp.Clerk
 }
 
+// updateConfig fetches the latest configuration from the shard controller
 func (ck *Clerk) updateConfig() {
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
@@ -53,6 +56,7 @@ func (ck *Clerk) updateConfig() {
 	}
 }
 
+// pruneCache removes grpClerks for groups no longer in the configuration
 func (ck *Clerk) pruneCache() {
 	if len(ck.grpClerks) == 0 {
 		return
@@ -64,6 +68,7 @@ func (ck *Clerk) pruneCache() {
 	}
 }
 
+// MakeClerk creates a new Clerk.
 func MakeClerk(clnt *tester.Clnt, sck *shardctrler.ShardCtrler) kvtest.IKVClerk {
 	ck := &Clerk{
 		clnt:      clnt,
@@ -76,6 +81,7 @@ func MakeClerk(clnt *tester.Clnt, sck *shardctrler.ShardCtrler) kvtest.IKVClerk 
 	return ck
 }
 
+// Get fetches the value for a key.
 func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 	for {
 		grpCk := ck.genGrpClerk(key)
@@ -91,6 +97,7 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 	}
 }
 
+// Put sets the value for a key.
 func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 	seq := atomic.AddInt64(&ck.seq, 1)
 	for {
@@ -107,6 +114,7 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 	}
 }
 
+// genGrpClerk returns the shard group clerk for the given key,
 func (ck *Clerk) genGrpClerk(key string) *shardgrp.Clerk {
 	shard := shardcfg.Key2Shard(key)
 

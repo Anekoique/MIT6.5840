@@ -310,7 +310,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	// initialize timers
-	rf.electionTimer = time.NewTimer(rf.electionTimeout())
+	rf.electionTimer = time.NewTimer(time.Duration(rand.Int63n(int64(ElectionJitter))))
 	rf.heartbeatTimer = time.NewTimer(rf.heartbeatTimeout())
 
 	// start ticker goroutine to start elections

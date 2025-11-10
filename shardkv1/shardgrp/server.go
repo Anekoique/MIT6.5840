@@ -18,16 +18,19 @@ import (
 	tester "6.5840/tester1"
 )
 
+// Entry represents a key-value entry in a shard.
 type Entry struct {
 	Value   string
 	Version rpc.Tversion
 }
 
+// LastOp represents the last operation performed by a client.
 type LastOp struct {
 	Seq   int64
 	Reply rpc.PutReply
 }
 
+// ShardState represents the state of a shard.
 type ShardState struct {
 	Owned      bool
 	Frozen     bool
@@ -36,11 +39,13 @@ type ShardState struct {
 	LastOps    map[int64]LastOp
 }
 
+// Shard represents a shard in the shard group.
 type Shard struct {
 	mu sync.RWMutex
 	ShardState
 }
 
+// ShardGroup represents a shard group server.
 type ShardGroup struct {
 	me     int
 	dead   int32
@@ -51,11 +56,13 @@ type ShardGroup struct {
 	id int64
 }
 
+// getShard returns the shard for the given key.
 func (grp *ShardGroup) getShard(key string) *Shard {
 	sh := shardcfg.Key2Shard(key)
 	return grp.shards[sh]
 }
 
+// updateEntry updates the entry for a key in the shard.
 func (s *Shard) updateEntry(args *rpc.PutArgs) {
 	s.Stores[args.Key] = Entry{
 		args.Value,
@@ -63,6 +70,7 @@ func (s *Shard) updateEntry(args *rpc.PutArgs) {
 	}
 }
 
+// updateNum updates the maximum configuration number seen for the shard.
 func (s *Shard) updateNum(num shardcfg.Tnum) bool {
 	if num >= s.MaxNumSeen {
 		s.MaxNumSeen = num
@@ -71,6 +79,7 @@ func (s *Shard) updateNum(num shardcfg.Tnum) bool {
 	return false
 }
 
+// serialize serializes the shard state to a byte slice.
 func (s *Shard) serialize() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
@@ -80,6 +89,7 @@ func (s *Shard) serialize() []byte {
 	return w.Bytes()
 }
 
+// deserialize deserializes the shard state from a byte slice.
 func (s *Shard) deserialize(data []byte) {
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
@@ -93,6 +103,7 @@ func (s *Shard) deserialize(data []byte) {
 	s.LastOps = maps.Clone(lastOps)
 }
 
+// DoOp executes the given operation on the shard group.
 func (grp *ShardGroup) DoOp(req any) any {
 	switch req := req.(type) {
 	case *rpc.GetArgs:
@@ -109,6 +120,7 @@ func (grp *ShardGroup) DoOp(req any) any {
 	return nil
 }
 
+// doGet fetches the value for a key.
 func (s *Shard) doGet(args *rpc.GetArgs) (reply rpc.GetReply) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -125,6 +137,7 @@ func (s *Shard) doGet(args *rpc.GetArgs) (reply rpc.GetReply) {
 	return
 }
 
+// doPut sets the value for a key.
 func (s *Shard) doPut(args *rpc.PutArgs) (reply rpc.PutReply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,6 +175,7 @@ func (s *Shard) doPut(args *rpc.PutArgs) (reply rpc.PutReply) {
 	return
 }
 
+// doFreeze freezes the shard and returns its state.
 func (s *Shard) doFreeze(args *shardrpc.FreezeShardArgs) (reply shardrpc.FreezeShardReply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,6 +193,7 @@ func (s *Shard) doFreeze(args *shardrpc.FreezeShardArgs) (reply shardrpc.FreezeS
 	return
 }
 
+// doInstall installs the shard with the given state.
 func (s *Shard) doInstall(args *shardrpc.InstallShardArgs) (reply shardrpc.InstallShardReply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,6 +207,7 @@ func (s *Shard) doInstall(args *shardrpc.InstallShardArgs) (reply shardrpc.Insta
 	return
 }
 
+// doDelete activates the shard.
 func (s *Shard) doDelete(args *shardrpc.DeleteShardArgs) (reply shardrpc.DeleteShardReply) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,6 +228,7 @@ func (s *Shard) doDelete(args *shardrpc.DeleteShardArgs) (reply shardrpc.DeleteS
 	return
 }
 
+// Snapshot returns the snapshot of the shard group.
 func (grp *ShardGroup) Snapshot() []byte {
 	states := make([]ShardState, shardcfg.NShards)
 	for i := 0; i < shardcfg.NShards; i++ {
@@ -229,6 +246,7 @@ func (grp *ShardGroup) Snapshot() []byte {
 	return w.Bytes()
 }
 
+// Restore restores the shard group from the given snapshot data.
 func (grp *ShardGroup) Restore(data []byte) {
 	d := labgob.NewDecoder(bytes.NewReader(data))
 
@@ -245,6 +263,7 @@ func (grp *ShardGroup) Restore(data []byte) {
 	}
 }
 
+// handleRPC is a helper function to handle RPC calls.
 func handleRPC[A any, R any](grp *ShardGroup, op string, args *A, reply *R) {
 	raft.DPrintf("[SERVER][%s ENTER] ShardGroup %d server=%d %s with args=%v", op, grp.id, grp.me, op, args)
 	defer raft.DPrintf("[SERVER][%s RETURN] ShardGroup %d server=%d %s return with reply=%v", op, grp.id, grp.me, op, reply)
@@ -257,35 +276,43 @@ func handleRPC[A any, R any](grp *ShardGroup, op string, args *A, reply *R) {
 	}
 }
 
+// Get fetches the value for a key.
 func (grp *ShardGroup) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 	handleRPC(grp, "GET", args, reply)
 }
 
+// Put sets the value for a key.
 func (grp *ShardGroup) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 	handleRPC(grp, "PUT", args, reply)
 }
 
+// FreezeShard freezes the shard and returns its state.
 func (grp *ShardGroup) FreezeShard(args *shardrpc.FreezeShardArgs, reply *shardrpc.FreezeShardReply) {
 	handleRPC(grp, "FREEZE", args, reply)
 }
 
+// InstallShard installs the shard with the given state.
 func (grp *ShardGroup) InstallShard(args *shardrpc.InstallShardArgs, reply *shardrpc.InstallShardReply) {
 	handleRPC(grp, "INSTALL", args, reply)
 }
 
+// DeleteShard activates the shard.
 func (grp *ShardGroup) DeleteShard(args *shardrpc.DeleteShardArgs, reply *shardrpc.DeleteShardReply) {
 	handleRPC(grp, "DELETE", args, reply)
 }
 
+// Kill marks the shard group server as dead.
 func (grp *ShardGroup) Kill() {
 	atomic.StoreInt32(&grp.dead, 1)
 }
 
+// killed checks if the shard group server is dead.
 func (grp *ShardGroup) killed() bool {
 	z := atomic.LoadInt32(&grp.dead)
 	return z == 1
 }
 
+// StartServerShardGrp starts a shard group server.
 func StartServerShardGrp(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persister *tester.Persister, maxraftstate int) []tester.IService {
 	labgob.Register(&rpc.PutArgs{})
 	labgob.Register(&rpc.GetArgs{})
